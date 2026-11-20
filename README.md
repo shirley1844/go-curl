@@ -139,7 +139,7 @@ The `Form` implementation is covered by tests that spin up a real
 `multipart/form-data` server and verify the received fields:
 
 ```bash
-go test -run 'TestMultipleFields|TestEmptyContent|TestAddWithType|TestAddFile|TestUnboundForm|TestUnsupportedType|TestMissingFile' -v .
+go test -run 'TestMultipleFields|TestEmptyContent|TestAddWithType|TestAddFile|TestUnboundForm|TestUnsupportedType|TestMissingFile|TestFormWithMulti' -v .
 ```
 
 | Test | Verifies |
@@ -151,6 +151,7 @@ go test -run 'TestMultipleFields|TestEmptyContent|TestAddWithType|TestAddFile|Te
 | `TestUnboundForm` | `Add` before `Setopt` returns an error, does not panic |
 | `TestUnsupportedType` | unsupported content returns an error |
 | `TestMissingFile` | missing file returns an error |
+| `TestFormWithMulti` | three concurrent `multi` handles each send all their fields |
 
 > Note: upstream's `TestVersionInfo` may fail on hosts whose libcurl supports
 > newer protocols (e.g. `mqtt`, `rtmpe`, `gophers`) that are not in its hardcoded

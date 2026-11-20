@@ -207,3 +207,112 @@ func TestMissingFile(t *testing.T) {
 		t.Error("不存在的文件应返回错误")
 	}
 }
+
+// multi 接口下的 Form：多个句柄并发上传，各自的字段都要正确到达。
+func TestFormWithMulti(t *testing.T) {
+	srv := newServer(t)
+	defer srv.Close()
+
+	const n = 3
+	type handle struct {
+		easy *curl.CURL
+		form *curl.Form
+		body []byte
+	}
+
+	m := curl.MultiInit()
+	defer m.Cleanup()
+
+	handles := make([]*handle, 0, n)
+	for i := 0; i < n; i++ {
+		easy := curl.EasyInit()
+		form := curl.NewForm()
+		h := &handle{easy: easy, form: form}
+		handles = append(handles, h)
+
+		if err := easy.Setopt(curl.OPT_HTTPPOST, form); err != nil {
+			t.Fatalf("绑定 form 失败: %v", err)
+		}
+		easy.Setopt(curl.OPT_URL, srv.URL)
+		// userdata 必须非 nil，否则回调里 ctx 解引用会 panic
+		easy.Setopt(curl.OPT_WRITEDATA, h)
+		easy.Setopt(curl.OPT_WRITEFUNCTION, func(p []byte, userdata interface{}) bool {
+			hh, ok := userdata.(*handle)
+			if !ok || hh == nil {
+				return false
+			}
+			hh.body = append(hh.body, p...)
+			return true
+		})
+
+		if err := m.AddHandle(easy); err != nil {
+			t.Fatalf("AddHandle 失败: %v", err)
+		}
+	}
+
+	// 每个句柄加两个字段，验证 multi 下同样不会互相覆盖
+	for i, h := range handles {
+		h.form.Add("idx", string(rune('A'+i)))
+		h.form.Add("tag", "multi")
+	}
+
+	// 轮询直到所有句柄完成。Perform 返回仍在运行的句柄数。
+	done := 0
+	drain := func() {
+		for {
+			msg, left := m.Info_read()
+			if msg == nil {
+				break
+			}
+			done++
+			if left == 0 {
+				break
+			}
+		}
+	}
+
+	// 收尾阶段：等所有句柄完成后再把剩余消息读干净
+	for i := 0; i < 1000; i++ {
+		running, err := m.Perform()
+		if err != nil {
+			t.Fatalf("multi Perform 失败: %v", err)
+		}
+		drain()
+		if running == 0 && done >= n {
+			break
+		}
+		if running == 0 && done == 0 {
+			t.Fatalf("multi 未执行任何传输 (running=0, done=0)")
+		}
+	}
+	// 完成消息可能滞后，再补读几轮
+	for i := 0; i < 100 && done < n; i++ {
+		if _, err := m.Perform(); err != nil {
+			t.Fatalf("multi Perform 失败: %v", err)
+		}
+		drain()
+	}
+	if done != n {
+		t.Fatalf("期望 %d 个句柄完成，实际 %d", n, done)
+	}
+
+	for i, h := range handles {
+		var got map[string]interface{}
+		if err := json.Unmarshal(h.body, &got); err != nil {
+			t.Errorf("句柄 %d 响应解析失败: %v", i, err)
+			continue
+		}
+		want := string(rune('A' + i))
+		if got["idx"] != want {
+			t.Errorf("句柄 %d: idx 期望 %q 实际 %v", i, want, got["idx"])
+		}
+		if got["tag"] != "multi" {
+			t.Errorf("句柄 %d: tag 字段丢失 (%v), 说明 multi 下多个字段仍未正确累积", i, got["tag"])
+		}
+	}
+
+	for _, h := range handles {
+		h.form.Free()
+		h.easy.Cleanup()
+	}
+}
