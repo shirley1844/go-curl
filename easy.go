@@ -35,132 +35,74 @@ static CURLcode curl_easy_getinfo_slist(CURL *curl, CURLINFO info, struct curl_s
  return curl_easy_getinfo(curl, info, p);
 }
 
-// static CURLFORMcode curl_formadd_name_content_length(
-//     struct curl_httppost **httppost, struct curl_httppost **last_post, char *name, char *content, int length) {
-//     return curl_formadd(httppost, last_post,
-//                         CURLFORM_COPYNAME, name,
-//                         CURLFORM_COPYCONTENTS, content,
-//                         CURLFORM_CONTENTSLENGTH, length, CURLFORM_END);
-// }
-// static CURLFORMcode curl_formadd_name_content_length_type(
-//     struct curl_httppost **httppost, struct curl_httppost **last_post, char *name, char *content, int length, char *type) {
-//     return curl_formadd(httppost, last_post,
-//                         CURLFORM_COPYNAME, name,
-//                         CURLFORM_COPYCONTENTS, content,
-//                         CURLFORM_CONTENTSLENGTH, length,
-//                         CURLFORM_CONTENTTYPE, type, CURLFORM_END);
-// }
-// static CURLFORMcode curl_formadd_name_file_type(
-//     struct curl_httppost **httppost, struct curl_httppost **last_post, char *name, char *filename, char *type) {
-//     return curl_formadd(httppost, last_post,
-//                         CURLFORM_COPYNAME, name,
-//                         CURLFORM_FILE, filename,
-//                         CURLFORM_CONTENTTYPE, type, CURLFORM_END);
-// }
-static CURLcode curl_formadd_name_content_length(CURL *curl, const char *name, const char *content, size_t length) {
-    CURLcode ret;
-    curl_mime *form = NULL;
-    curl_mimepart *field = NULL;
-
-    // 初始化MIME形式的数据
-    form = curl_mime_init(curl);
+// curl_mime_create 创建一个新的 MIME 表单结构并挂到句柄上。
+// 返回 NULL 表示内存不足（CURLE_OUT_OF_MEMORY）。
+// 注意：生命周期由调用方（Go 侧 Form）管理，不在此处释放。
+static curl_mime *curl_mime_create(CURL *curl) {
+    curl_mime *form = curl_mime_init(curl);
     if (!form)
-        return CURLE_OUT_OF_MEMORY;
-
-    // 添加一个表单字段: 名称
-    field = curl_mime_addpart(form);
-    if (!field)
-        goto cleanup;
-    ret = curl_mime_name(field, name);
-    if (ret)
-        goto cleanup;
-
-    // 设置内容及其长度
-    ret = curl_mime_data(field, content, length);
-    if (ret)
-        goto cleanup;
-
-    // 将MIME数据设置给CURL句柄
-    ret = curl_easy_setopt(curl, CURLOPT_MIMEPOST, form);
-
-cleanup:
-    if (ret && form)
+        return NULL;
+    if (curl_easy_setopt(curl, CURLOPT_MIMEPOST, form) != CURLE_OK) {
         curl_mime_free(form);
-    return ret;
+        return NULL;
+    }
+    return form;
 }
 
-static CURLcode curl_formadd_name_content_length_type(CURL *curl, const char *name, const char *content, size_t length, const char *type) {
-    CURLcode ret;
-    curl_mime *form = NULL;
-    curl_mimepart *field = NULL;
-
-    // 初始化MIME形式的数据
-    form = curl_mime_init(curl);
-    if (!form)
-        return CURLE_OUT_OF_MEMORY;
-
-    // 添加一个表单字段: 名称
-    field = curl_mime_addpart(form);
-    if (!field)
-        goto cleanup;
-    ret = curl_mime_name(field, name);
-    if (ret)
-        goto cleanup;
-
-    // 设置内容及其长度
-    ret = curl_mime_data(field, content, length);
-    if (ret)
-        goto cleanup;
-
-    // 设置内容类型
-    ret = curl_mime_type(field, type);
-    if (ret)
-        goto cleanup;
-
-    // 将MIME数据设置给CURL句柄
-    ret = curl_easy_setopt(curl, CURLOPT_MIMEPOST, form);
-
-cleanup:
-    if (ret && form)
+// curl_mime_free_form 释放 MIME 表单结构。
+static void curl_mime_free_form(curl_mime *form) {
+    if (form)
         curl_mime_free(form);
-    return ret;
 }
 
-static CURLcode curl_formadd_name_file_type(CURL *curl, const char *name, const char *filename, const char *type) {
-    CURLcode ret;
-    curl_mime *form = NULL;
-    curl_mimepart *field = NULL;
+// curl_mime_add_part_data 追加一个内容为原始字节的表单字段。
+static CURLcode curl_mime_add_part_data(curl_mime *form, const char *name,
+                                        const char *content, size_t length,
+                                        const char *type) {
+    curl_mimepart *field;
 
-    // 初始化MIME形式的数据
-    form = curl_mime_init(curl);
-    if (!form)
-        return CURLE_OUT_OF_MEMORY;
+    if (!form || !name)
+        return CURLE_BAD_FUNCTION_ARGUMENT;
 
-    // 添加一个表单字段: 名称
     field = curl_mime_addpart(form);
     if (!field)
-        goto cleanup;
-    ret = curl_mime_name(field, name);
-    if (ret)
-        goto cleanup;
+        return CURLE_OUT_OF_MEMORY;
 
-    // 设置文件数据
-    ret = curl_mime_filedata(field, filename);
-    if (ret)
-        goto cleanup;
+    if (curl_mime_name(field, name) != CURLE_OK)
+        return CURLE_OUT_OF_MEMORY;
+    if (curl_mime_data(field, content, length) != CURLE_OK)
+        return CURLE_OUT_OF_MEMORY;
+    if (type && type[0] && curl_mime_type(field, type) != CURLE_OK)
+        return CURLE_OUT_OF_MEMORY;
 
-    // 设置内容类型
-    ret = curl_mime_type(field, type);
-    if (ret)
-        goto cleanup;
+    return CURLE_OK;
+}
 
-    // 将MIME数据设置给CURL句柄
-    ret = curl_easy_setopt(curl, CURLOPT_MIMEPOST, form);
+// curl_mime_add_part_file 追加一个以文件内容为数据的表单字段。
+static CURLcode curl_mime_add_part_file(curl_mime *form, const char *name,
+                                        const char *filename,
+                                        const char *remote_filename,
+                                        const char *type) {
+    curl_mimepart *field;
 
-cleanup:
-    if (ret && form)
-        curl_mime_free(form);
-    return ret;
+    if (!form || !name || !filename)
+        return CURLE_BAD_FUNCTION_ARGUMENT;
+
+    field = curl_mime_addpart(form);
+    if (!field)
+        return CURLE_OUT_OF_MEMORY;
+
+    if (curl_mime_name(field, name) != CURLE_OK)
+        return CURLE_OUT_OF_MEMORY;
+    if (curl_mime_filedata(field, filename) != CURLE_OK)
+        return CURLE_READ_ERROR;
+    if (remote_filename && remote_filename[0] &&
+        curl_mime_filename(field, remote_filename) != CURLE_OK)
+        return CURLE_OUT_OF_MEMORY;
+    if (type && type[0] && curl_mime_type(field, type) != CURLE_OK)
+        return CURLE_OUT_OF_MEMORY;
+
+    return CURLE_OK;
 }
 
 
@@ -170,6 +112,7 @@ cleanup:
 import "C"
 
 import (
+	"errors"
 	"fmt"
 	"mime"
 	"path"
@@ -340,10 +283,13 @@ func (curl *CURL) Setopt(opt int, param interface{}) error {
 		}
 
 	// for OPT_HTTPPOST, use struct Form
-	case opt == OPT_HTTPPOST:
-		post := param.(*Form)
-		ptr := post.head
-		return newCurlError(C.curl_easy_setopt_pointer(p, C.CURLoption(opt), unsafe.Pointer(ptr)))
+	// MIME 结构在此处创建并挂到句柄上，之后 Form.Add* 只会追加字段。
+	case opt == OPT_HTTPPOST || opt == OPT_MIMEPOST:
+		form, ok := param.(*Form)
+		if !ok || form == nil {
+			return errors.New("curl: OPT_HTTPPOST expects *curl.Form obtained via curl.NewForm()")
+		}
+		return form.bind(curl)
 
 	case opt >= C.CURLOPTTYPE_OFF_T:
 		val := C.off_t(0)
@@ -503,13 +449,13 @@ func (curl *CURL) Getinfo(info CurlInfo) (ret interface{}, err error) {
 		a_long := C.long(-1)
 		err := newCurlError(C.curl_easy_getinfo_long(p, cInfo, &a_long))
 		ret := int(a_long)
-		debugf("Getinfo %s", ret)
+		debugf("Getinfo %v", ret)
 		return ret, err
 	case C.CURLINFO_DOUBLE:
 		a_double := C.double(0.0)
 		err := newCurlError(C.curl_easy_getinfo_double(p, cInfo, &a_double))
 		ret := float64(a_double)
-		debugf("Getinfo %s", ret)
+		debugf("Getinfo %v", ret)
 		return ret, err
 	case C.CURLINFO_SLIST:
 		a_ptr_slist := (*C.struct_curl_slist)(nil)
@@ -549,175 +495,164 @@ func (curl *CURL) mallocAddPtr(ptr *C.char) {
 	curl.mallocAllocs = append(curl.mallocAllocs, ptr)
 }
 
-// A multipart/formdata HTTP POST form
+// A multipart/formdata HTTP POST form.
+//
+// Form 使用 libcurl 的 MIME API（curl_mime_*）实现。旧的 curl_formadd /
+// CURLFORM_* 接口自 libcurl 7.56.0 起已被废弃，在较新的发行版上会导致编译告警
+// 甚至编译失败，因此这里完全迁移到 curl_mime。
+//
+// 使用方式：
+//
+//	easy := curl.EasyInit()
+//	easy.Setopt(curl.OPT_URL, "https://example.com/upload")
+//	form := curl.NewForm()
+//	form.Add("field1", "value")
+//	form.AddFile("file", "/path/to/file.bin")
+//	easy.Setopt(curl.OPT_HTTPPOST, form)
+//	defer form.Free()   // 在 easy.Cleanup() 之前调用
+//	easy.Perform()
+//
+// 一个 Form 对应一份 MIME 结构，Add/AddWithType/AddFile 都追加到同一份结构中，
+// 多次调用不会互相覆盖（旧实现每次 Add 都会新建并覆盖 CURLOPT_MIMEPOST，
+// 导致只有最后一个字段生效）。
 type Form struct {
-	curlHandle *C.CURL // 添加这个字段来保存 CURL 句柄
-	head, last *C.struct_curl_httppost
+	mime *C.curl_mime
 }
 
-// func NewForm() *Form {
-// 	return &Form{}
-// }
-
-func NewForm(curlHandle *C.CURL) *Form {
-	return &Form{
-		curlHandle: curlHandle,
-		head:       nil,
-		last:       nil,
-	}
+// NewForm 创建一个新的 multipart/form-data 表单。
+// 表单会在第一次 Add 时绑定到 CURL 句柄，因此无需在创建时传入句柄。
+func NewForm() *Form {
+	return &Form{}
 }
 
-// func (form *Form) Add(name string, content interface{}) error {
-// 	head, last := form.head, form.last
-// 	namestr := C.CString(name)
-// 	defer C.free(unsafe.Pointer(namestr))
-// 	var (
-// 		buffer *C.char
-// 		length C.int
-// 	)
-// 	switch t := content.(type) {
-// 	case string:
-// 		buffer = C.CString(t)
-// 		length = C.int(len(t))
-// 	case []byte:
-// 		buffer = C.CString(string(t))
-// 		length = C.int(len(t))
-// 	default:
-// 		panic("not implemented")
-// 	}
-// 	defer C.free(unsafe.Pointer(buffer))
-// 	C.curl_formadd_name_content_length(&head, &last, namestr, buffer, length)
-// 	form.head, form.last = head, last
-// 	return nil
-// }
-
-// func (form *Form) Add(name string, content interface{}) error {
-// 	namestr := C.CString(name)
-// 	defer C.free(unsafe.Pointer(namestr))
-
-// 	var buffer *C.char
-// 	var length C.size_t // 使用 size_t 而不是 int 来匹配 C 函数签名
-
-// 	switch t := content.(type) {
-// 	case string:
-// 		buffer = C.CString(t)
-// 		length = C.size_t(len(t))
-// 	case []byte:
-// 		buffer = C.CString(string(t))
-// 		length = C.size_t(len(t))
-// 	default:
-// 		panic("not implemented")
-// 	}
-// 	defer C.free(unsafe.Pointer(buffer))
-
-// 	// 调用新的 C 函数，注意这里直接传入 form.curlHandle
-// 	ret := C.curl_formadd_name_content_length(form.curlHandle, namestr, buffer, length)
-// 	if ret != 0 {
-// 		return fmt.Errorf("failed to add form part: %d", ret)
-// 	}
-
-// 	// 注意：由于现在使用了新的 MIME API，不需要手动管理 head 和 last
-// 	// 所有表单数据都通过 CURLOPT_MIMEPOST 设置给 CURL 句柄
-
-// 	return nil
-// }
-
-// func (form *Form) AddWithType(name string, content interface{}, content_type string) error {
-// 	head, last := form.head, form.last
-// 	namestr := C.CString(name)
-// 	typestr := C.CString(content_type)
-// 	defer C.free(unsafe.Pointer(namestr))
-// 	defer C.free(unsafe.Pointer(typestr))
-// 	var (
-// 		buffer *C.char
-// 		length C.int
-// 	)
-// 	switch t := content.(type) {
-// 	case string:
-// 		buffer = C.CString(t)
-// 		length = C.int(len(t))
-// 	case []byte:
-// 		buffer = C.CString(string(t))
-// 		length = C.int(len(t))
-// 	default:
-// 		panic("not implemented")
-// 	}
-// 	defer C.free(unsafe.Pointer(buffer))
-// 	C.curl_formadd_name_content_length_type(&head, &last, namestr, buffer, length, typestr)
-// 	form.head, form.last = head, last
-// 	return nil
-// }
-
-//	func (form *Form) AddFile(name, filename string) error {
-//		head, last := form.head, form.last
-//		namestr := C.CString(name)
-//		pathstr := C.CString(filename)
-//		typestr := C.CString(guessType(filename))
-//		defer C.free(unsafe.Pointer(namestr))
-//		defer C.free(unsafe.Pointer(pathstr))
-//		defer C.free(unsafe.Pointer(typestr))
-//		C.curl_formadd_name_file_type(&head, &last, namestr, pathstr, typestr)
-//		form.head, form.last = head, last
-//		return nil
-//	}
-func (form *Form) Add(name string, content interface{}) error {
-	namestr := C.CString(name)
-	defer C.free(unsafe.Pointer(namestr))
-
-	var buffer *C.char
-	var length C.size_t // 使用 size_t 而不是 int 来匹配 C 函数签名
-
-	switch t := content.(type) {
-	case string:
-		buffer = C.CString(t)
-		length = C.size_t(len(t))
-	case []byte:
-		buffer = C.CString(string(t))
-		length = C.size_t(len(t))
-	default:
-		panic("not implemented")
+// bind 确保已创建 MIME 结构并挂到指定句柄上（懒加载）。
+// 后续成功绑定后，即使 Setopt 传入的 curl 参数不同也会沿用已绑定的句柄。
+func (form *Form) bind(curl *CURL) error {
+	if form.mime != nil {
+		return nil
 	}
-	defer C.free(unsafe.Pointer(buffer))
-
-	// 将 curlHandle 转换为 unsafe.Pointer
-	ret := C.curl_formadd_name_content_length(unsafe.Pointer(form.curlHandle), namestr, buffer, length)
-	if ret != 0 {
-		return fmt.Errorf("failed to add form part: %d", ret)
+	if curl == nil || curl.handle == nil {
+		return errors.New("curl: Form requires a valid CURL handle")
 	}
-
+	m := C.curl_mime_create(curl.handle)
+	if m == nil {
+		return errors.New("curl: failed to create mime form")
+	}
+	form.mime = m
 	return nil
 }
 
-func (form *Form) AddWithType(name string, content interface{}, content_type string) error {
+// Free 释放 MIME 结构占用的 C 内存。
+// 必须在 EasyCleanup 之前调用，且释放后不可再向该 Form 添加字段。
+func (form *Form) Free() {
+	C.curl_mime_free_form(form.mime)
+	form.mime = nil
+}
+
+// Add 追加一个表单字段。content 支持 string 与 []byte，两者都会按原始字节发送。
+func (form *Form) Add(name string, content interface{}) error {
+	return form.AddWithType(name, content, "")
+}
+
+// AddWithType 追加一个带显式 Content-Type 的表单字段。
+// contentType 为空字符串时由 libcurl 自行推断。
+func (form *Form) AddWithType(name string, content interface{}, contentType string) error {
+	if form.mime == nil {
+		return errors.New("curl: Form is not bound to a CURL handle, call Setopt(OPT_HTTPPOST, form) first")
+	}
+
+	var buf unsafe.Pointer
+	var length C.size_t
+
+	switch t := content.(type) {
+	case string:
+		if len(t) > 0 {
+			buf = C.CBytes([]byte(t))
+			defer C.free(buf)
+		}
+		length = C.size_t(len(t))
+	case []byte:
+		if len(t) > 0 {
+			buf = C.CBytes(t)
+			defer C.free(buf)
+		}
+		length = C.size_t(len(t))
+	default:
+		return fmt.Errorf("curl: unsupported form content type %T (want string or []byte)", content)
+	}
+
 	namestr := C.CString(name)
-	typestr := C.CString(content_type)
 	defer C.free(unsafe.Pointer(namestr))
+
+	var typestr *C.char
+	if contentType != "" {
+		typestr = C.CString(contentType)
+		defer C.free(unsafe.Pointer(typestr))
+	}
+
+	if ret := C.curl_mime_add_part_data(form.mime, namestr, (*C.char)(buf), length, typestr); ret != C.CURLE_OK {
+		return fmt.Errorf("curl: failed to add form part %q: %s", name, C.GoString(C.curl_easy_strerror(ret)))
+	}
+	return nil
+}
+
+// AddFile 追加一个文件字段，使用文件的二进制内容作为字段值。
+// Content-Type 会优先根据扩展名推断。
+//
+// 注意：这是一个会返回 error 的方法，符合 Go 的惯例；与上游历史版本中
+// 无返回值、且内容为空的同名方法不兼容，调用方需要处理返回值。
+func (form *Form) AddFile(name, filename string) error {
+	return form.AddFileWithType(name, filename, guessType(filename))
+}
+
+// AddFileWithType 追加一个文件字段，并显式指定 Content-Type。
+func (form *Form) AddFileWithType(name, filename, contentType string) error {
+	if form.mime == nil {
+		return errors.New("curl: Form is not bound to a CURL handle, call Setopt(OPT_HTTPPOST, form) first")
+	}
+	if filename == "" {
+		return errors.New("curl: AddFile requires a non-empty filename")
+	}
+
+	namestr := C.CString(name)
+	defer C.free(unsafe.Pointer(namestr))
+	filestr := C.CString(filename)
+	defer C.free(unsafe.Pointer(filestr))
+
+	var typestr *C.char
+	if contentType != "" {
+		typestr = C.CString(contentType)
+		defer C.free(unsafe.Pointer(typestr))
+	}
+
+	if ret := C.curl_mime_add_part_file(form.mime, namestr, filestr, nil, typestr); ret != C.CURLE_OK {
+		return fmt.Errorf("curl: failed to add file part %q from %q: %s", name, filename, C.GoString(C.curl_easy_strerror(ret)))
+	}
+	return nil
+}
+
+// AddFileAs 追加一个文件字段，并以 remoteFilename 作为上传后的文件名。
+func (form *Form) AddFileAs(name, filename, remoteFilename string) error {
+	if form.mime == nil {
+		return errors.New("curl: Form is not bound to a CURL handle, call Setopt(OPT_HTTPPOST, form) first")
+	}
+	if filename == "" {
+		return errors.New("curl: AddFileAs requires a non-empty filename")
+	}
+
+	namestr := C.CString(name)
+	defer C.free(unsafe.Pointer(namestr))
+	filestr := C.CString(filename)
+	defer C.free(unsafe.Pointer(filestr))
+	remotestr := C.CString(remoteFilename)
+	defer C.free(unsafe.Pointer(remotestr))
+	typestr := C.CString(guessType(filename))
 	defer C.free(unsafe.Pointer(typestr))
 
-	var buffer *C.char
-	var length C.size_t // 使用 size_t 而不是 int 来匹配 C 函数签名
-
-	switch t := content.(type) {
-	case string:
-		buffer = C.CString(t)
-		length = C.size_t(len(t))
-	case []byte:
-		buffer = C.CString(string(t))
-		length = C.size_t(len(t))
-	default:
-		panic("not implemented")
+	if ret := C.curl_mime_add_part_file(form.mime, namestr, filestr, remotestr, typestr); ret != C.CURLE_OK {
+		return fmt.Errorf("curl: failed to add file part %q from %q: %s", name, filename, C.GoString(C.curl_easy_strerror(ret)))
 	}
-	defer C.free(unsafe.Pointer(buffer))
-
-	// 将 curlHandle 转换为 unsafe.Pointer
-	ret := C.curl_formadd_name_content_length_type(unsafe.Pointer(form.curlHandle), namestr, buffer, length, typestr)
-	if ret != 0 {
-		return fmt.Errorf("failed to add form part with type: %d", ret)
-	}
-
 	return nil
-}
-func (form *Form) AddFromFile(name, filename string) {
 }
 
 func guessType(filename string) string {

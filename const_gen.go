@@ -116,6 +116,7 @@ const (
 	OPT_COOKIE                    = C.CURLOPT_COOKIE
 	OPT_HTTPHEADER                = C.CURLOPT_HTTPHEADER
 	OPT_HTTPPOST                  = C.CURLOPT_HTTPPOST
+	OPT_MIMEPOST                  = C.CURLOPT_MIMEPOST // libcurl >= 7.56.0, preferred over OPT_HTTPPOST
 	OPT_SSLCERT                   = C.CURLOPT_SSLCERT
 	OPT_SSLCERTPASSWD             = C.CURLOPT_SSLCERTPASSWD
 	OPT_SSLKEYPASSWD              = C.CURLOPT_SSLKEYPASSWD
