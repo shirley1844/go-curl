@@ -2,7 +2,7 @@
 package main
 
 import (
-	curl "github.com/andelf/go-curl"
+	curl "github.com/shirley1844/go-curl"
 	"time"
 )
 
