@@ -122,7 +122,7 @@ If you only use non-`Form` features (perform requests, `Setopt`, callbacks,
 ## Installation / 安装
 
 ```bash
-go get github.com/shirley1844/go-curl@v0.0.2
+go get github.com/shirley1844/go-curl@v0.0.3
 ```
 
 Requirements: Go 1.21+, libcurl with CGO enabled. On Debian/Ubuntu:
